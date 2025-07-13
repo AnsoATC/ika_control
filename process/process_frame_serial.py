@@ -38,7 +38,7 @@ def get_road_vector(seg_image, seg_model):
 def get_barrier_vectors(det_image, depth_image, det_model):
     """Detect the two closest barriers (left and right) and calculate vectors."""
     h, w = det_image.shape[:2]
-    det_results = det_model.predict(det_image, conf=0.5, iou=0.5)
+    det_results = det_model.predict(det_image, conf=0.8, iou=0.8)
     inference_time = det_results[0].speed['inference'] / 1000  # Convertir de ms à s
     barriers = []
     for result in det_results:
@@ -124,8 +124,8 @@ def calculate_angular_error(robot_vector, road_vector):
     angle_deg = np.degrees(angle_rad)
     return angle_deg
 
-def process_frame(rgb_image, depth_image, seg_model_path, det_model_path):
-    """Process frames for navigation and detection."""
+def process_frame(rgb_image, depth_image, seg_model_path, det_model_path, ser):
+    """Process frames for navigation and detection with serial control."""
     # Load models
     seg_model = YOLO(seg_model_path)
     det_model = YOLO(det_model_path)
@@ -148,6 +148,17 @@ def process_frame(rgb_image, depth_image, seg_model_path, det_model_path):
 
     # Calculate angular error
     angular_error = calculate_angular_error(robot_vector, road_vector)
+
+    # Send serial commands based on navigation data
+    if road_ref_point is None:
+        ser.write(b'S')  # Stop robot
+    elif angular_error is not None:
+        if angular_error < -ERROR_THRESHOLD:
+            ser.write(b'L')  # Turn left
+        elif angular_error > ERROR_THRESHOLD:
+            ser.write(b'R')  # Turn right
+        else:
+            ser.write(b'F')  # Move forward
 
     # Display navigation data on Combined Frame
     h, w = combined_frame.shape[:2]
