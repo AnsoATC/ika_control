@@ -6,7 +6,7 @@ import os
 import time
 
 def main():
-    # Try to initialize RealSense pipeline
+    # Initialize RealSense pipeline
     pipeline = rs.pipeline()
     config = rs.config()
     config.enable_stream(rs.stream.depth, 640, 480, rs.format.z16, 30)
@@ -14,12 +14,14 @@ def main():
     try:
         profile = pipeline.start(config)
         align = rs.align(rs.stream.color)
+        depth_sensor = profile.get_device().first_depth_sensor()
+        depth_scale = depth_sensor.get_depth_scale()
         use_camera = True
-        print("RealSense camera initialized successfully.")
+        print("RealSense camera initialized successfully with depth scale:", depth_scale)
     except RuntimeError:
         print("RealSense camera not detected. Using fallback video.")
         use_camera = False
-        cap = cv2.VideoCapture('/home/ansoatc/Videos/test_video.mp4')  # Ajuste le chemin
+        cap = cv2.VideoCapture('/home/ansoatc/Videos/test_video.mp4')
         if not cap.isOpened():
             print("Fallback video not found. Please provide a valid video path.")
             return
@@ -29,11 +31,8 @@ def main():
     seg_model_path = os.path.join(base_dir, 'models/yolo11n_segmentation.pt')
     det_model_path = os.path.join(base_dir, 'models/yolo12n_detection.pt')
 
-    if not os.path.exists(seg_model_path):
-        print(f"Segmentation model {seg_model_path} not found.")
-        return
-    if not os.path.exists(det_model_path):
-        print(f"Detection model {det_model_path} not found.")
+    if not os.path.exists(seg_model_path) or not os.path.exists(det_model_path):
+        print(f"Models not found at {seg_model_path} or {det_model_path}")
         return
 
     # Initialize variables
@@ -43,7 +42,6 @@ def main():
     try:
         while True:
             if use_camera:
-                # Wait for frames and align them
                 frames = pipeline.wait_for_frames()
                 aligned_frames = align.process(frames)
                 depth_frame = aligned_frames.get_depth_frame()
@@ -52,7 +50,6 @@ def main():
                 if not depth_frame or not color_frame:
                     continue
 
-                # Convert frames to numpy arrays
                 rgb_image = np.asanyarray(color_frame.get_data())
                 depth_image = np.asanyarray(depth_frame.get_data())
                 depth_colormap = cv2.applyColorMap(cv2.convertScaleAbs(depth_image, alpha=0.03), cv2.COLORMAP_JET)
@@ -60,12 +57,12 @@ def main():
                 ret, rgb_image = cap.read()
                 if not ret:
                     break
-                depth_image = np.zeros_like(rgb_image, dtype=np.float32)  # Placeholder depth
+                depth_image = np.zeros_like(rgb_image, dtype=np.float32)  # Placeholder
                 depth_colormap = cv2.applyColorMap(cv2.convertScaleAbs(depth_image, alpha=0.03), cv2.COLORMAP_JET)
 
-            # Process frames
+            # Process frames with depth scale
             original_frame, depth_frame_display, seg_frame, det_frame, combined_frame, navigation_data = process_frame(
-                rgb_image, depth_image, seg_model_path, det_model_path
+                rgb_image, depth_image, depth_scale, seg_model_path, det_model_path
             )
 
             # Display frames
@@ -74,6 +71,13 @@ def main():
             cv2.imshow('Navigable Road Frame', seg_frame)
             cv2.imshow('Detection Frame', det_frame)
             cv2.imshow('Combined Frame', combined_frame)
+
+            # Calculate and display FPS
+            frame_count += 1
+            if time.time() - last_time >= 1.0:
+                fps = frame_count / (time.time() - last_time)
+                frame_count = 0
+                last_time = time.time()
 
             # Exit on 'q' key
             if cv2.waitKey(1) & 0xFF == ord('q'):
