@@ -1,7 +1,6 @@
 import cv2
 import numpy as np
 from ultralytics import YOLO
-import os
 import pytesseract
 
 # Constants
@@ -16,11 +15,11 @@ def get_robot_vector(image):
     cv2.arrowedLine(image, (start_x, start_y), (end_x, end_y), (0, 0, 255), 2)  # Red robot orientation vector
     return np.array([0, -(h // 2)]), (end_x, end_y), image
 
-def get_cone_vector(det_image, depth_image, det_model, depth_scale):
-    """Detect cones and display with distances, and read text on traffic signs."""
+def get_cone_vector(det_image, det_image_copy, depth_image, det_model, depth_scale):
+    """Detect cones and display with distances, and read text on traffic signs with cropping."""
     h, w = det_image.shape[:2]
-    det_results = det_model.predict(det_image, conf=0.7, iou=0.4)  # Adjusted YOLO parameters
-    inference_time = det_results[0].speed['inference'] / 1000  # Convert to seconds
+    det_results = det_model.predict(det_image, conf=0.7, iou=0.4)
+    inference_time = det_results[0].speed['inference'] / 1000
 
     for result in det_results:
         boxes = result.boxes.xyxy.cpu().numpy()
@@ -30,8 +29,13 @@ def get_cone_vector(det_image, depth_image, det_model, depth_scale):
         for box, cls, conf in zip(boxes, classes, confidences):
             x1, y1, x2, y2 = map(int, box)
             x_c, y_c = (x1 + x2) // 2, (y1 + y2) // 2
+            width = x2 - x1
+            height = y2 - y1
+            radius = max(width, height) // 2  # Approximate radius of the circular sign
+            inner_radius = radius * 5 // 9  # Adjusted to 4/9 to exclude red border
+
             if 0 <= y_c < depth_image.shape[0] and 0 <= x_c < depth_image.shape[1]:
-                depth_value = depth_image[y_c, x_c] * depth_scale  # Convert to meters
+                depth_value = depth_image[y_c, x_c] * depth_scale
                 if 0.01 <= depth_value <= 10.0:
                     class_name = class_names[int(cls)].lower()
                     color = (0, 0, 255) if class_name == "traffic_cone" else \
@@ -43,19 +47,24 @@ def get_cone_vector(det_image, depth_image, det_model, depth_scale):
                         cv2.putText(det_image, f"Dist: {depth_value:.2f}m", (x_c, y_c - 10),
                                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
                     elif class_name == "traffic_sign":
-                        # Crop the region of interest (ROI) for OCR
-                        roi = det_image[y1:y2, x1:x2].copy()
-                        # Apply Gaussian blur to reduce noise
-                        roi = cv2.GaussianBlur(roi, (3, 3), 0)
-                        # Convert to grayscale
-                        gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
-                        # Binarize the image with a fixed threshold
-                        _, thresh = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY_INV)
-                        # OCR configuration for single line of text
-                        config = r'--oem 1 --psm 6'
-                        # Read text
-                        text = pytesseract.image_to_string(thresh, config=config).strip()
+                        # Crop the central part excluding the red border
+                        crop_size = inner_radius * 2
+                        crop_x1 = max(0, x_c - inner_radius)
+                        crop_y1 = max(0, y_c - inner_radius)
+                        crop_x2 = min(w, x_c + inner_radius)
+                        crop_y2 = min(h, y_c + inner_radius)
+                        roi = det_image_copy[crop_y1:crop_y2, crop_x1:crop_x2].copy()
+                        
+                        # OCR directly on the cropped image
+                        config = r'--oem 3 --psm 7'  # OEM 3: default LSTM, PSM 7: treat image as a single line of text
+                        text = pytesseract.image_to_string(roi, config=config).strip()
+
+                        # Display OCR region (optional)
+                        cv2.imshow('Traffic Sign ROI', roi)
+                        cv2.waitKey(1)
+
                         # Validate text as a number between 1 and 12
+                        #if text.isdigit() and 1 <= int(text) <= 12:
                         if text.isdigit() and 1 <= int(text) <= 12:
                             label = f"Traffic sign - {text}"
                         else:
@@ -67,12 +76,12 @@ def get_cone_vector(det_image, depth_image, det_model, depth_scale):
                         cv2.putText(det_image, class_name, (x_c, y_c + 20),
                                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
 
-    return det_image, inference_time  # Return the modified image and inference time
+    return det_image, inference_time
 
 def get_barrier_vector(det_image, depth_image, det_model, depth_scale):
     """Detect barriers and display (no distance)."""
     h, w = det_image.shape[:2]
-    det_results = det_model.predict(det_image, conf=0.7, iou=0.4)  # Adjusted YOLO parameters
+    det_results = det_model.predict(det_image, conf=0.7, iou=0.4)
 
     for result in det_results:
         boxes = result.boxes.xyxy.cpu().numpy()
@@ -83,7 +92,7 @@ def get_barrier_vector(det_image, depth_image, det_model, depth_scale):
             x1, y1, x2, y2 = map(int, box)
             x_c, y_c = (x1 + x2) // 2, (y1 + y2) // 2
             if 0 <= y_c < depth_image.shape[0] and 0 <= x_c < depth_image.shape[1]:
-                depth_value = depth_image[y_c, x_c] * depth_scale  # Convert to meters
+                depth_value = depth_image[y_c, x_c] * depth_scale
                 if 0.01 <= depth_value <= 10.0:
                     class_name = class_names[int(cls)].lower()
                     color = (0, 0, 255) if class_name == "traffic_cone" else \
@@ -94,7 +103,7 @@ def get_barrier_vector(det_image, depth_image, det_model, depth_scale):
                     cv2.putText(det_image, class_name, (x_c, y_c + 20),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
 
-    return None, None, det_image  # No reference vector from barriers
+    return None, None, det_image
 
 def get_road_mask(seg_image, seg_model):
     """Calculate road mask and return its center of the lower half of the bbox as reference."""
@@ -114,10 +123,8 @@ def get_road_mask(seg_image, seg_model):
                 green_mask[mask > 0] = [0, 255, 0]
                 seg_image = cv2.addWeighted(seg_image, 0.7, green_mask, 0.3, 0)
 
-                # Extract bbox coordinates
                 x1, y1, x2, y2 = map(int, box)
-                # Calculate the center of the lower half of the bbox
-                lower_half_y = y1 + (y2 - y1) // 2  # Middle of the lower half
+                lower_half_y = y1 + (y2 - y1) // 2
                 mask_center_x = (x1 + x2) // 2
                 mask_center_y = lower_half_y
 
@@ -131,8 +138,8 @@ def get_road_mask(seg_image, seg_model):
                 end_x, end_y = int(start_x + dx), int(start_y + dy)
                 reference_vector = np.array([dx, dy])
                 reference_point = (mask_center_x, mask_center_y)
-                cv2.arrowedLine(seg_image, (start_x, start_y), (end_x, end_y), (255, 0, 0), 2)  # Blue reference vector
-                cv2.circle(seg_image, (mask_center_x, mask_center_y), 6, (0, 255, 255), -1)  # Yellow reference point
+                cv2.arrowedLine(seg_image, (start_x, start_y), (end_x, end_y), (255, 0, 0), 2)
+                cv2.circle(seg_image, (mask_center_x, mask_center_y), 6, (0, 255, 255), -1)
 
     return seg_image, reference_vector, reference_point
 
@@ -154,28 +161,20 @@ def calculate_angular_error(robot_vector, reference_vector):
 
 def process_frame(rgb_image, depth_image, depth_scale, seg_model_path, det_model_path):
     """Process frames for navigation based on road mask center."""
-    # Load models
     seg_model = YOLO(seg_model_path)
     det_model = YOLO(det_model_path)
 
-    # Prepare frames
     combined_frame = rgb_image.copy()
+    combined_frame_copy = rgb_image.copy()
     depth_frame_display = cv2.applyColorMap(cv2.convertScaleAbs(depth_image, alpha=0.03), cv2.COLORMAP_JET).copy()
 
-    # Get robot vector
     robot_vector, robot_ref_point, combined_frame = get_robot_vector(combined_frame)
-
-    # Get road mask and reference
     combined_frame, reference_vector, reference_point = get_road_mask(combined_frame, seg_model)
+    combined_frame, inference_time = get_cone_vector(combined_frame, combined_frame_copy, depth_image, det_model, depth_scale)
+    get_barrier_vector(combined_frame, depth_image, det_model, depth_scale)
 
-    # Display detected objects (cones, barriers, signs) for illustration
-    combined_frame, inference_time = get_cone_vector(combined_frame, depth_image, det_model, depth_scale)
-    get_barrier_vector(combined_frame, depth_image, det_model, depth_scale)  # No return needed, just display
-
-    # Calculate angular error
     angular_error = calculate_angular_error(robot_vector, reference_vector)
 
-    # Display navigation data on Combined Frame
     h, w = combined_frame.shape[:2]
     if angular_error is not None:
         cv2.putText(combined_frame, f"Angle: {angular_error:.1f} deg", (10, int(h * 0.05)),
@@ -193,20 +192,18 @@ def process_frame(rgb_image, depth_image, depth_scale, seg_model_path, det_model
         cv2.putText(combined_frame, "No Ref, Stop", (50, int(h * 0.15)),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
 
-    # Add reference vector and point to Combined Frame
     if reference_vector is not None:
         cv2.arrowedLine(combined_frame, (w // 2, h), (w // 2 + int(reference_vector[0]), h - int(reference_vector[1])),
-                        (255, 0, 0), 2)  # Blue reference vector
-        cv2.circle(combined_frame, reference_point, 6, (0, 255, 255), -1)  # Yellow reference point
+                        (255, 0, 0), 2)
+        cv2.circle(combined_frame, reference_point, 6, (0, 255, 255), -1)
 
-    # Display FPS using YOLO's inference time
     fps = 1.0 / inference_time if inference_time > 0 else 0.0
     cv2.putText(combined_frame, f"FPS: {fps:.1f}", (w - 150, int(h * 0.05)),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
 
-    navigation_data = {
-        'angle_error': angular_error,
-        'reference_point': reference_point
-    }
+    navigation_data = {'angle_error': angular_error, 'reference_point': reference_point}
+
+    cv2.imshow('Combined Frame', combined_frame)
+    cv2.waitKey(1)
 
     return combined_frame, depth_frame_display, navigation_data
