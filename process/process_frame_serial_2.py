@@ -72,9 +72,9 @@ def get_barrier_vector(det_image, depth_image, det_model, depth_scale):
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
 
     return None, None, det_image  # No reference vector from barriers
-    
+
 def get_road_mask(seg_image, seg_model):
-    """Calculate road mask and return its center of the lower third of the bbox as reference."""
+    """Calculate road mask and return its center of the lower half of the bbox as reference."""
     h, w = seg_image.shape[:2]
     seg_results = seg_model.predict(seg_image, conf=0.6, iou=0.6)
     reference_vector = None
@@ -92,10 +92,10 @@ def get_road_mask(seg_image, seg_model):
 
                 # Extract bbox coordinates
                 x1, y1, x2, y2 = map(int, box)
-                # Calculate the center of the lower third of the bbox
-                lower_third_y = y1 + 2 * (y2 - y1) // 3  # Center of the lower third
+                # Calculate the center of the lower half of the bbox
+                lower_half_y = y1 + (y2 - y1) // 2  # Middle of the lower half
                 mask_center_x = (x1 + x2) // 2
-                mask_center_y = lower_third_y
+                mask_center_y = lower_half_y
 
                 start_x, start_y = w // 2, h
                 dx = mask_center_x - start_x

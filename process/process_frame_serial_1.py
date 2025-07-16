@@ -72,43 +72,40 @@ def get_barrier_vector(det_image, depth_image, det_model, depth_scale):
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
 
     return None, None, det_image  # No reference vector from barriers
-    
+
 def get_road_mask(seg_image, seg_model):
-    """Calculate road mask and return its center of the lower third of the bbox as reference."""
+    """Calculate road mask and return its center as reference."""
     h, w = seg_image.shape[:2]
     seg_results = seg_model.predict(seg_image, conf=0.6, iou=0.6)
     reference_vector = None
     reference_point = None
 
     for result in seg_results:
-        if result.masks is not None and result.boxes is not None:
+        if result.masks is not None:
             masks = result.masks.data.cpu().numpy()
-            boxes = result.boxes.xyxy.cpu().numpy()
-            for mask, box in zip(masks, boxes):
+            for mask in masks:
                 mask = cv2.resize(mask, (w, h), interpolation=cv2.INTER_NEAREST)
                 green_mask = np.zeros_like(seg_image)
                 green_mask[mask > 0] = [0, 255, 0]
                 seg_image = cv2.addWeighted(seg_image, 0.7, green_mask, 0.3, 0)
 
-                # Extract bbox coordinates
-                x1, y1, x2, y2 = map(int, box)
-                # Calculate the center of the lower third of the bbox
-                lower_third_y = y1 + 2 * (y2 - y1) // 3  # Center of the lower third
-                mask_center_x = (x1 + x2) // 2
-                mask_center_y = lower_third_y
-
-                start_x, start_y = w // 2, h
-                dx = mask_center_x - start_x
-                dy = mask_center_y - start_y
-                length = h // 2
-                norm = np.sqrt(dx**2 + dy**2)
-                if norm > 0:
-                    dx, dy = (dx / norm) * length, (dy / norm) * length
-                end_x, end_y = int(start_x + dx), int(start_y + dy)
-                reference_vector = np.array([dx, dy])
-                reference_point = (mask_center_x, mask_center_y)
-                cv2.arrowedLine(seg_image, (start_x, start_y), (end_x, end_y), (255, 0, 0), 2)  # Blue reference vector
-                cv2.circle(seg_image, (mask_center_x, mask_center_y), 6, (0, 255, 255), -1)  # Yellow reference point
+                # Calculate center of the mask
+                mask_indices = np.where(mask > 0)
+                if len(mask_indices[0]) > 0:  # Ensure mask has pixels
+                    mask_center_y, mask_center_x = np.mean(mask_indices[0]), np.mean(mask_indices[1])
+                    mask_center_x, mask_center_y = int(mask_center_x), int(mask_center_y)
+                    start_x, start_y = w // 2, h
+                    dx = mask_center_x - start_x
+                    dy = mask_center_y - start_y
+                    length = h // 2
+                    norm = np.sqrt(dx**2 + dy**2)
+                    if norm > 0:
+                        dx, dy = (dx / norm) * length, (dy / norm) * length
+                    end_x, end_y = int(start_x + dx), int(start_y + dy)
+                    reference_vector = np.array([dx, dy])
+                    reference_point = (mask_center_x, mask_center_y)
+                    cv2.arrowedLine(seg_image, (start_x, start_y), (end_x, end_y), (255, 0, 0), 2)  # Blue reference vector
+                    cv2.circle(seg_image, (mask_center_x, mask_center_y), 6, (0, 255, 255), -1)  # Yellow reference point
 
     return seg_image, reference_vector, reference_point
 

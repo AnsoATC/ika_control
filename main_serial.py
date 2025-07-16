@@ -7,38 +7,48 @@ import time
 import serial
 import struct
 
-# Seri portu ve baudrate'i ayarla
-ser = serial.Serial('/dev/serial/by-id/usb-STMicroelectronics_STM32_STLink_0670FF505787884867114230-if02', 115200, timeout=1)
-
 # Constants
 ERROR_THRESHOLD = 5  # Angular error threshold in degrees
 
-def send_packet(throttle, direction, steer):
-    # Geçerli yön karakterlerini kontrol et ve byte haline getir
-    if direction not in ['r', 'l', 'd']:
-        print("Yön hatalı! 'r', 'l' veya 'd' olmalı.")
+# Set up the serial port and baud rate
+try:
+    ser = serial.Serial('COM10', 115200, timeout=1)
+    print(f"Serial port {ser.port} opened successfully.")
+except serial.SerialException as e:
+    print(f"Error opening serial port: {e}. Try running with sudo or check permissions.")
+    exit(1)
+
+def send_packet(gaz, yon, aci):
+    # Check if the serial port is open
+    if not ser.is_open:
+        print("Serial port is not open! Check the connection.")
         return
 
-    # throttle 1000-2000 aralığında olmalı
-    if throttle < 1000 or throttle > 2000:
-        print("Throttle değeri 1000-2000 arasında olmalı!")
+    # Validate direction (must be 'r', 'l', or 'd')
+    if yon not in ['r', 'l', 'd']:
+        print("Invalid direction! Must be 'r', 'l', or 'd'.")
         return
 
-    # steer 0-180 aralığında olmalı
-    if steer < 0 or steer > 180:
-        print("Steer değeri 0-180 arasında olmalı!")
+    # Validate gaz range (1000-2000)
+    if gaz < 1000 or gaz > 2000:
+        print("Gaz value must be between 1000 and 2000!")
         return
 
-    # 2 byte throttle, little endian
-    throttle_bytes = struct.pack('<H', throttle)
-    direction_byte = direction.encode('ascii')  # tek byte
-    steer_byte = struct.pack('B', steer)
+    # Validate aci range (0-180)
+    if aci < -180 or aci > 180:
+        print("Aci value must be between 0 and 180!")
+        return
+    if aci < 90 and aci > 0:
+        aci = 75
+    if aci > -90 and aci < 0:
+        aci = -75
 
-    # Paket oluştur
-    packet = throttle_bytes + direction_byte + steer_byte + b'\n'
-
-    ser.write(packet)
-    print(f"Gönderildi -> Throttle: {throttle}, Yön: {direction}, Steer: {steer}")
+    # Create packet with a newline character (\n) as terminator
+    packet = f"S,{gaz},{yon},{aci}\n"
+    ser.write(packet.encode())
+    ser.flush()  # Ensure all data is written to the serial port
+    print(packet)
+    print(f"Sent -> Gaz: {gaz}, Yön: {yon}, Aci: {aci}")
 
 def main():
     # Initialize RealSense pipeline
@@ -61,10 +71,9 @@ def main():
             print("Fallback video not found. Please provide a valid video path.")
             return
 
-    # Load model paths
-    base_dir = os.path.expanduser('~/Teknofest/omu-ika/ika_control')
-    seg_model_path = os.path.join(base_dir, 'models/yolo11n_segmentation.pt')
-    det_model_path = os.path.join(base_dir, 'models/yolo12n_detection.pt')
+    # Load model paths (relative path)
+    seg_model_path = os.path.join('models', 'yolo11n_segmentation.pt')
+    det_model_path = os.path.join('models', 'yolo12n_detection.pt')
 
     if not os.path.exists(seg_model_path) or not os.path.exists(det_model_path):
         print(f"Models not found at {seg_model_path} or {det_model_path}")
@@ -96,30 +105,29 @@ def main():
                 depth_colormap = cv2.applyColorMap(cv2.convertScaleAbs(depth_image, alpha=0.03), cv2.COLORMAP_JET)
 
             # Process frames with depth scale
-            original_frame, depth_frame_display, seg_frame, det_frame, combined_frame, navigation_data = process_frame(
+            combined_frame, depth_frame_display, navigation_data = process_frame(
                 rgb_image, depth_image, depth_scale, seg_model_path, det_model_path
             )
 
-            # Navigation based on angular error
-            if navigation_data['angle_error'] is not None:
-                throttle = 1700  # Default throttle value
-                steer = 90      # Default steer value (center)
+            # Navigation based on angular error with reference vector
+            if navigation_data['angle_error'] is not None and navigation_data['reference_point'] is not None:
+                gaz = 1300  # Default gaz value (adjustable)
+                aci = 0    # Default aci value (center)
                 if navigation_data['angle_error'] < -ERROR_THRESHOLD:
-                    direction = 'l'  # Turn left
-                    steer = 45      # Adjust steer angle
+                    yon = 'l'  # Turn left
+                    aci = int(navigation_data['angle_error'])   # Adjust aci angle
                 elif navigation_data['angle_error'] > ERROR_THRESHOLD:
-                    direction = 'r'  # Turn right
-                    steer = 135     # Adjust steer angle
+                    yon = 'r'  # Turn right
+                    aci = int(navigation_data['angle_error'])  # Adjust aci angle
                 else:
-                    direction = 'd'  # Move forward
-                send_packet(throttle, direction, steer)
+                    yon = 'd'  # Move forward
+                send_packet(gaz, yon, aci)
+            else:
+                send_packet(1500, 'd', 90)  # Stop if no reference
 
             # Display frames
-            cv2.imshow('Original Frame', original_frame)
-            cv2.imshow('Depth Frame', depth_frame_display)
-            cv2.imshow('Navigable Road Frame', seg_frame)
-            cv2.imshow('Detection Frame', det_frame)
             cv2.imshow('Combined Frame', combined_frame)
+            cv2.imshow('Depth Frame', depth_frame_display)
 
             # Calculate and display FPS
             frame_count += 1
@@ -130,6 +138,7 @@ def main():
 
             # Exit on 'q' key
             if cv2.waitKey(1) & 0xFF == ord('q'):
+                send_packet(1500, 'd', 90)  # Stop robot
                 break
 
     finally:
