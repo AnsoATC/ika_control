@@ -56,7 +56,7 @@ def get_cone_vector(det_image, det_image_copy, depth_image, det_model, depth_sca
                         roi = det_image_copy[crop_y1:crop_y2, crop_x1:crop_x2].copy()
                         
                         # OCR directly on the cropped image
-                        config = r'--oem 3 --psm 7'  # OEM 3: default LSTM, PSM 7: treat image as a single line of text
+                        config = r'--oem 3 --psm 10'  # OEM 3: default LSTM, PSM 7: treat image as a single line of text
                         text = pytesseract.image_to_string(roi, config=config).strip()
 
                         # Display OCR region (optional)
