@@ -6,7 +6,6 @@ import pytesseract
 # Constants
 ERROR_THRESHOLD = 5  # Angular error threshold in degrees
 FRAME_CENTER_X = 320  # Centre horizontal for 640px width
-DUR = False  # Global flag for DUR detection, default to False
 
 def get_robot_vector(image):
     """Calculate robot vector (from bottom center to frame center)."""
@@ -18,7 +17,6 @@ def get_robot_vector(image):
 
 def get_cone_vector(det_image, det_image_copy, depth_image, det_model, depth_scale):
     """Detect cones and display with distances, and read text on traffic signs with cropping."""
-    global DUR  # Use global to modify the DUR flag
     h, w = det_image.shape[:2]
     det_results = det_model.predict(det_image, conf=0.7, iou=0.4)
     inference_time = det_results[0].speed['inference'] / 1000
@@ -58,23 +56,19 @@ def get_cone_vector(det_image, det_image_copy, depth_image, det_model, depth_sca
                         roi = det_image_copy[crop_y1:crop_y2, crop_x1:crop_x2].copy()
                         
                         # OCR directly on the cropped image
-                        config = r'--oem 3 --psm 7'  # OEM 3: default LSTM, PSM 7: treat image as a single line of text
-                        text = pytesseract.image_to_string(roi, config=config).strip().upper()
+                        config = r'--oem 3 --psm 10'  # OEM 3: default LSTM, PSM 7: treat image as a single line of text
+                        text = pytesseract.image_to_string(roi, config=config).strip()
 
-                        # Display OCR region
+                        # Display OCR region (optional)
                         cv2.imshow('Traffic Sign ROI', roi)
                         cv2.waitKey(1)
 
-                        # Check for numbers (1-12) or "DUR" pattern
+                        # Validate text as a number between 1 and 12
+                        #if text.isdigit() and 1 <= int(text) <= 12:
                         if text.isdigit() and 1 <= int(text) <= 12:
                             label = f"Traffic sign - {text}"
-                            DUR = False  # Reset DUR when a number is detected
-                        elif any(c in text for c in ['D', 'U', 'R']) and len(text) >= 1:
-                            label = "Traffic sign - DUR"
-                            DUR = True  # Set DUR to True when detected
                         else:
                             label = "Traffic sign - ?"
-                            DUR = False  # Reset DUR for other cases
                         print(f"Traffic sign - {text}")
                         cv2.putText(det_image, label, (x_c, y1 - 10),
                                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
@@ -167,7 +161,6 @@ def calculate_angular_error(robot_vector, reference_vector):
 
 def process_frame(rgb_image, depth_image, depth_scale, seg_model_path, det_model_path):
     """Process frames for navigation based on road mask center."""
-    global DUR, reference_point  # Use global for DUR and reference_point
     seg_model = YOLO(seg_model_path)
     det_model = YOLO(det_model_path)
 
@@ -179,10 +172,6 @@ def process_frame(rgb_image, depth_image, depth_scale, seg_model_path, det_model
     combined_frame, reference_vector, reference_point = get_road_mask(combined_frame, seg_model)
     combined_frame, inference_time = get_cone_vector(combined_frame, combined_frame_copy, depth_image, det_model, depth_scale)
     get_barrier_vector(combined_frame, depth_image, det_model, depth_scale)
-
-    # Update reference_point based on DUR
-    if DUR:
-        reference_point = None
 
     angular_error = calculate_angular_error(robot_vector, reference_vector)
 
@@ -199,12 +188,7 @@ def process_frame(rgb_image, depth_image, depth_scale, seg_model_path, det_model
         else:
             cv2.putText(combined_frame, "Move Forward", (50, int(h * 0.1)),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
-
-    # Display stop message based on DUR and reference_point
-    if DUR and reference_point is None:
-        cv2.putText(combined_frame, "DUR - Stop robot", (50, int(h * 0.15)),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
-    elif not DUR and reference_point is None:
+    if reference_point is None:
         cv2.putText(combined_frame, "No Ref, Stop", (50, int(h * 0.15)),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
 
