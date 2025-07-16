@@ -15,11 +15,11 @@ def get_robot_vector(image):
     end_x, end_y = w // 2, h // 2
     cv2.arrowedLine(image, (start_x, start_y), (end_x, end_y), (0, 0, 255), 2)  # Red robot orientation vector
     return np.array([0, -(h // 2)]), (end_x, end_y), image
-    
+
 def get_cone_vector(det_image, depth_image, det_model, depth_scale):
     """Detect cones and display with distances, and read text on traffic signs."""
     h, w = det_image.shape[:2]
-    det_results = det_model.predict(det_image, conf=0.5, iou=0.5)
+    det_results = det_model.predict(det_image, conf=0.7, iou=0.4)  # Adjusted YOLO parameters
     inference_time = det_results[0].speed['inference'] / 1000  # Convert to seconds
 
     for result in det_results:
@@ -45,17 +45,18 @@ def get_cone_vector(det_image, depth_image, det_model, depth_scale):
                     elif class_name == "traffic_sign":
                         # Crop the region of interest (ROI) for OCR
                         roi = det_image[y1:y2, x1:x2].copy()
+                        # Apply Gaussian blur to reduce noise
+                        roi = cv2.GaussianBlur(roi, (3, 3), 0)
                         # Convert to grayscale
                         gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
-                        # Binarize the image
-                        _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-                        # OCR configuration for single character
-                        config = r'--oem 3 --psm 10'
+                        # Binarize the image with a fixed threshold
+                        _, thresh = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY_INV)
+                        # OCR configuration for single line of text
+                        config = r'--oem 1 --psm 6'
                         # Read text
                         text = pytesseract.image_to_string(thresh, config=config).strip()
                         # Validate text as a number between 1 and 12
-                        # if text.isdigit() and 1 <= int(text) <= 12:
-                        if text.isdigit():
+                        if text.isdigit() and 1 <= int(text) <= 12:
                             label = f"Traffic sign - {text}"
                         else:
                             label = "Traffic sign - ?"
@@ -71,7 +72,7 @@ def get_cone_vector(det_image, depth_image, det_model, depth_scale):
 def get_barrier_vector(det_image, depth_image, det_model, depth_scale):
     """Detect barriers and display (no distance)."""
     h, w = det_image.shape[:2]
-    det_results = det_model.predict(det_image, conf=0.5, iou=0.5)
+    det_results = det_model.predict(det_image, conf=0.7, iou=0.4)  # Adjusted YOLO parameters
 
     for result in det_results:
         boxes = result.boxes.xyxy.cpu().numpy()
@@ -99,6 +100,7 @@ def get_road_mask(seg_image, seg_model):
     """Calculate road mask and return its center of the lower half of the bbox as reference."""
     h, w = seg_image.shape[:2]
     seg_results = seg_model.predict(seg_image, conf=0.6, iou=0.6)
+
     reference_vector = None
     reference_point = None
 
